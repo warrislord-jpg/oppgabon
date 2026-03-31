@@ -1,0 +1,252 @@
+// prisma/schema.prisma
+// OppGabon — Schéma base de données PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────
+// UTILISATEURS
+// ─────────────────────────────────────────
+
+enum UserRole {
+  CANDIDAT
+  EMPLOYEUR
+  ADMIN
+}
+
+enum UserPlan {
+  FREE
+  PRO
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String    @map("password_hash")
+  role          UserRole  @default(CANDIDAT)
+  plan          UserPlan  @default(FREE)
+  fullName      String    @map("full_name")
+  phone         String?
+  city          String?
+  avatarUrl     String?   @map("avatar_url")
+  bio           String?
+  isVerified    Boolean   @default(false) @map("is_verified")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  listings         Listing[]
+  applications     Application[]
+  sentMessages     Message[]       @relation("SentMessages")
+  conversationsA   Conversation[]  @relation("UserA")
+  conversationsB   Conversation[]  @relation("UserB")
+  payments         Payment[]
+  savedListings    SavedListing[]
+  profile          CandidatProfile?
+
+  @@map("users")
+}
+
+// ─────────────────────────────────────────
+// PROFIL CANDIDAT (informations CV)
+// ─────────────────────────────────────────
+
+model CandidatProfile {
+  id           String   @id @default(uuid())
+  userId       String   @unique @map("user_id")
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  diplome      String?
+  ecole        String?
+  anneesDExp   Int?     @map("annees_dexp")
+  disponible   Boolean  @default(true)
+  typeContrat  String?  @map("type_contrat")
+  skills       String[] // tableau de compétences
+  experiences  Json?    // tableau JSON d'expériences
+  formations   Json?    // tableau JSON de formations
+  cvUrl        String?  @map("cv_url")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("candidat_profiles")
+}
+
+// ─────────────────────────────────────────
+// ANNONCES
+// ─────────────────────────────────────────
+
+enum ListingType {
+  EMPLOI
+  STAGE
+  LOGEMENT
+}
+
+enum ListingStatus {
+  ACTIVE
+  PAUSED
+  EXPIRED
+  DELETED
+}
+
+model Listing {
+  id          String        @id @default(uuid())
+  userId      String        @map("user_id")
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type        ListingType
+  title       String
+  description String
+  city        String
+  quartier    String?
+  price       Int?          // FCFA/mois (null = à négocier)
+  status      ListingStatus @default(ACTIVE)
+  tags        String[]
+  images      String[]      // URLs Cloudinary
+  viewCount   Int           @default(0) @map("view_count")
+
+  // Emploi / Stage
+  contractType   String?   @map("contract_type")  // CDI, CDD, Stage...
+  sector         String?
+  experience     String?   // "2 ans minimum"
+  education      String?   // "BAC+2 minimum"
+  salaryMin      Int?      @map("salary_min")
+  salaryMax      Int?      @map("salary_max")
+  deadline       DateTime?
+
+  // Logement
+  roomType       String?   @map("room_type")     // Studio, F2, F3...
+  surface        Int?      // m²
+  furnished      Boolean?
+  amenities      String[]  // climatisé, parking...
+  availableFrom  DateTime? @map("available_from")
+
+  // Boost
+  boostedUntil   DateTime? @map("boosted_until")
+
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  applications   Application[]
+  conversations  Conversation[]
+  savedBy        SavedListing[]
+
+  @@map("listings")
+}
+
+// ─────────────────────────────────────────
+// CANDIDATURES
+// ─────────────────────────────────────────
+
+enum ApplicationStatus {
+  PENDING
+  VIEWED
+  ACCEPTED
+  REFUSED
+}
+
+model Application {
+  id          String            @id @default(uuid())
+  listingId   String            @map("listing_id")
+  listing     Listing           @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  applicantId String            @map("applicant_id")
+  applicant   User              @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+  coverLetter String?           @map("cover_letter")
+  cvUrl       String?           @map("cv_url")
+  status      ApplicationStatus @default(PENDING)
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+
+  @@unique([listingId, applicantId]) // une candidature par annonce par user
+  @@map("applications")
+}
+
+// ─────────────────────────────────────────
+// MESSAGERIE
+// ─────────────────────────────────────────
+
+model Conversation {
+  id        String    @id @default(uuid())
+  listingId String    @map("listing_id")
+  listing   Listing   @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  userAId   String    @map("user_a_id")
+  userA     User      @relation("UserA", fields: [userAId], references: [id])
+  userBId   String    @map("user_b_id")
+  userB     User      @relation("UserB", fields: [userBId], references: [id])
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  messages  Message[]
+
+  @@unique([listingId, userAId, userBId])
+  @@map("conversations")
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String       @map("conversation_id")
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String       @map("sender_id")
+  sender         User         @relation("SentMessages", fields: [senderId], references: [id])
+  content        String
+  attachmentUrl  String?      @map("attachment_url")
+  readAt         DateTime?    @map("read_at")
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  @@map("messages")
+}
+
+// ─────────────────────────────────────────
+// FAVORIS
+// ─────────────────────────────────────────
+
+model SavedListing {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listingId String   @map("listing_id")
+  listing   Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@unique([userId, listingId])
+  @@map("saved_listings")
+}
+
+// ─────────────────────────────────────────
+// PAIEMENTS
+// ─────────────────────────────────────────
+
+enum PaymentType {
+  BOOST_7J
+  BOOST_30J
+  PRO_MENSUEL
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum PaymentProvider {
+  AIRTEL_MONEY
+  MOOV_MONEY
+  CARD
+}
+
+model Payment {
+  id          String          @id @default(uuid())
+  userId      String          @map("user_id")
+  user        User            @relation(fields: [userId], references: [id])
+  listingId   String?         @map("listing_id")
+  amount      Int             // FCFA
+  type        PaymentType
+  provider    PaymentProvider
+  status      PaymentStatus   @default(PENDING)
+  externalRef String?         @map("external_ref") // ref opérateur
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  @@map("payments")
+}
